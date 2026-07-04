@@ -1,0 +1,16 @@
+# Credenciais — NUNCA versionar
+*.json
+*-key*.json
+databricks-sa-key*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Databricks
+.databricks/
+
+# Databricks internal
+.db_internal/
