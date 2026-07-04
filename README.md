@@ -16,6 +16,7 @@ OpenMeteo API → GCP Cloud Storage → Databricks (Bronze → Silver → Gold) 
 | Orquestração | Databricks Workflows |
 
 ## Estrutura do projeto
+```
 pipeline-meteorologico/
 ├── notebooks/
 │   ├── 01_ingestao_openmeteo.py   # Coleta dados da API OpenMeteo
@@ -25,6 +26,7 @@ pipeline-meteorologico/
 │   └── 05_exportacao_bigquery.py  # Exportação para BigQuery
 ├── requirements.txt
 └── README.md
+```
 ## Dados coletados
 
 - **Fonte**: [OpenMeteo API](https://open-meteo.com/) (gratuita, sem autenticação)
