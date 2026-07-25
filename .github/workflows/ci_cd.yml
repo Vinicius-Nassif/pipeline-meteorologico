@@ -10,7 +10,7 @@ on:
 
 jobs:
   ci:
-    name: CI — Validar código
+    name: CI — Validar código e testes
     runs-on: ubuntu-latest
 
     steps:
@@ -24,16 +24,21 @@ jobs:
 
       - name: Instalar dependências
         run: |
-          pip install pyflakes
+          pip install -r requirements-dev.txt
 
       - name: Validar sintaxe dos notebooks
         run: |
+          pip install pyflakes
           echo "Validando sintaxe dos notebooks..."
           for f in notebooks/*.py; do
             echo "  Verificando $f"
             python -m pyflakes "$f" || true
           done
           echo "✓ Validação concluída"
+
+      - name: Rodar testes com cobertura
+        run: |
+          pytest tests/ -v --cov=src --cov-report=term-missing
 
   cd:
     name: CD — Sincronizar com Databricks
