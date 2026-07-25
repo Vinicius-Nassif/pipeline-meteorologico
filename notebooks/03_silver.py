@@ -11,24 +11,29 @@
 
 # COMMAND ----------
 
+from datetime import date, timedelta
+from pyspark.sql import functions as F
+from pyspark.sql.types import DoubleType, IntegerType
+
 spark.sql("USE DATABASE pipeline_meteo")
-print("✓ Database selecionado: pipeline_meteo")
+
+ontem = date.today() - timedelta(days=1)
+ontem_str = ontem.isoformat()
+
+print(f"✓ Database selecionado: pipeline_meteo")
+print(f"✓ Data de processamento: {ontem_str}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Ler a Bronze e inspecionar
+# MAGIC ## Ler a Bronze e inspecionar (dia anterior)
 
 # COMMAND ----------
 
-from datetime import date
-
-hoje = str(date.today())
-
 df_bronze = spark.table("pipeline_meteo.bronze_clima") \
-    .filter(f"_particao_data = '{hoje}'")
+    .filter(f"_particao_data = '{ontem_str}'")
 
-print(f"Registros da Bronze para {hoje}: {df_bronze.count()}")
+print(f"Registros da Bronze para {ontem_str}: {df_bronze.count()}")
 df_bronze.printSchema()
 
 # COMMAND ----------
@@ -45,9 +50,6 @@ df_bronze.printSchema()
 # MAGIC - Drop de colunas de controle interno (não fazem sentido na Silver)
 
 # COMMAND ----------
-
-from pyspark.sql import functions as F
-from pyspark.sql.types import DoubleType, IntegerType, TimestampType
 
 df_silver = df_bronze \
     .withColumn("temperatura_c",    F.col("temperatura_c").cast(DoubleType())) \
@@ -70,20 +72,20 @@ df_silver = df_bronze \
 
 print("✓ Schema Silver:")
 df_silver.printSchema()
-df_silver.show(truncate=False)
+print(f"Total de registros: {df_silver.count()}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Limpeza do dia atual (dempotência)
+# MAGIC ## Limpeza do dia (idempotência)
 
 # COMMAND ----------
 
 spark.sql(f"""
     DELETE FROM pipeline_meteo.silver_clima
-    WHERE _particao_data = '{hoje}'
+    WHERE _particao_data = '{ontem_str}'
 """)
-print(f"✓ Silver: registros de {hoje} removidos (se existiam)")
+print(f"✓ Silver: registros de {ontem_str} removidos (se existiam)")
 
 # COMMAND ----------
 
@@ -94,12 +96,12 @@ print(f"✓ Silver: registros de {hoje} removidos (se existiam)")
 
 df_silver.write \
     .format("delta") \
-    .mode("overwrite") \
+    .mode("append") \
     .option("overwriteSchema", "true") \
     .partitionBy("_particao_data") \
     .saveAsTable("pipeline_meteo.silver_clima")
 
-print("✓ Camada Silver salva como tabela: pipeline_meteo.silver_clima")
+print("✓ Camada Silver salva: pipeline_meteo.silver_clima")
 
 # COMMAND ----------
 
@@ -108,14 +110,32 @@ print("✓ Camada Silver salva como tabela: pipeline_meteo.silver_clima")
 
 # COMMAND ----------
 
-df_validacao = spark.table("pipeline_meteo.silver_clima")
+print(f"Total de registros na Silver: {spark.table('pipeline_meteo.silver_clima').count()}")
 
-print(f"Total de registros na Silver: {df_validacao.count()}")
+print("\nÚltimos 5 dias:")
+spark.table("pipeline_meteo.silver_clima") \
+    .groupBy("_particao_data") \
+    .count() \
+    .orderBy(F.desc("_particao_data")) \
+    .show(5)
+
 print("\nDistribuição por região:")
-df_validacao.groupBy("regiao").count().orderBy("regiao").show()
-print("\nRegistros por data:")
-df_validacao.groupBy("_particao_data").count().orderBy("_particao_data").show()
-df_validacao.show(truncate=False)
+spark.table("pipeline_meteo.silver_clima") \
+    .filter(f"_particao_data = '{ontem_str}'") \
+    .groupBy("regiao") \
+    .count() \
+    .orderBy("regiao") \
+    .show()
+
+# COMMAND ----------
+
+# MAGIC %skip
+# MAGIC spark.sql("DELETE FROM pipeline_meteo.silver_clima WHERE _particao_data = '2026-07-04'")
+# MAGIC print("✓ Registros de 2026-07-04 removidos da Silver")
+# MAGIC
+# MAGIC spark.table("pipeline_meteo.silver_clima") \
+# MAGIC     .groupBy("_particao_data").count() \
+# MAGIC     .orderBy("_particao_data").show()
 
 # COMMAND ----------
 

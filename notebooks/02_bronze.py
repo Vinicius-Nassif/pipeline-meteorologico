@@ -6,8 +6,8 @@
 # COMMAND ----------
 
 # Biblioteca já instalada no ambiente — descomente se rodar em novo ambiente
-# %pip install google-cloud-storage
-# dbutils.library.restartPython()
+%pip install google-cloud-storage
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -17,8 +17,11 @@
 # COMMAND ----------
 
 import json
+import pandas as pd
+from datetime import datetime, timezone, date, timedelta
 from google.cloud import storage
 from google.oauth2 import service_account
+from pyspark.sql import functions as F
 
 chave_json = dbutils.secrets.get(scope="gcp-pipeline-meteo", key="gcs-service-account-key")
 SERVICE_ACCOUNT_KEY = json.loads(chave_json)
@@ -34,25 +37,24 @@ print(f"✓ Conectado ao bucket: {bucket.name}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Ler JSON bruto do GCS
+# MAGIC ## Ler JSON bruto do GCS (dia anterior)
 
 # COMMAND ----------
 
-from datetime import date
+ontem = date.today() - timedelta(days=1)
+ontem_str = ontem.isoformat()
 
-hoje = date.today()
-particao = f"ano={hoje.year}/mes={hoje.month:02d}/dia={hoje.day:02d}"
-nome_arquivo = f"clima_{hoje.isoformat()}.json"
-caminho_raw = f"raw/clima/{particao}/{nome_arquivo}"
+particao = f"ano={ontem.year}/mes={ontem.month:02d}/dia={ontem.day:02d}"
+caminho_raw = f"raw/clima/{particao}/clima_{ontem_str}.json"
 
 blob = bucket.blob(caminho_raw)
 conteudo = blob.download_as_text()
 dados_raw = json.loads(conteudo)
 
-print(f"✓ Arquivo lido: {caminho_raw}")
-print(f"  Data de coleta : {dados_raw['data_coleta']}")
-print(f"  Total cidades  : {dados_raw['total_cidades']}")
-print(f"  Registros      : {len(dados_raw['registros'])}")
+print(f"✓ Arquivo lido    : {caminho_raw}")
+print(f"  Data de coleta  : {dados_raw['data_coleta']}")
+print(f"  Total cidades   : {dados_raw['total_cidades']}")
+print(f"  Total registros : {dados_raw.get('total_registros', len(dados_raw['registros']))}")
 
 # COMMAND ----------
 
@@ -63,21 +65,16 @@ print(f"  Registros      : {len(dados_raw['registros'])}")
 
 # COMMAND ----------
 
-import pandas as pd
-from pyspark.sql import functions as F
-from datetime import datetime, timezone
-
-# Converter registros para DataFrame
 df_bronze = spark.createDataFrame(pd.DataFrame(dados_raw["registros"]))
 
-# Adicionar metadados de ingestão — padrão Bronze
-df_bronze = df_bronze.withColumn("_particao_data", F.lit(hoje.isoformat())) \
-                     .withColumn("_arquivo_origem", F.lit(caminho_raw)) \
-                     .withColumn("_ingestao_utc", F.lit(datetime.now(timezone.utc).isoformat()))
+df_bronze = df_bronze \
+    .withColumn("_particao_data", F.lit(ontem_str)) \
+    .withColumn("_arquivo_origem", F.lit(caminho_raw)) \
+    .withColumn("_ingestao_utc", F.lit(datetime.now(timezone.utc).isoformat()))
 
-print(f"✓ Schema Bronze:")
+print("✓ Schema Bronze:")
 df_bronze.printSchema()
-df_bronze.show(truncate=False)
+print(f"Total de registros no DataFrame: {df_bronze.count()}")
 
 # COMMAND ----------
 
@@ -86,17 +83,16 @@ df_bronze.show(truncate=False)
 
 # COMMAND ----------
 
-# Garante idempotência: rodar múltiplas vezes no mesmo dia não duplica dados
 spark.sql("CREATE DATABASE IF NOT EXISTS pipeline_meteo")
 
-hoje_str = hoje.isoformat()
 spark.sql(f"""
     DELETE FROM pipeline_meteo.bronze_clima
-    WHERE _particao_data = '{hoje_str}'
+    WHERE _particao_data = '{ontem_str}'
 """)
-print(f"✓ Registros de {hoje_str} removidos (se existiam)")
+print(f"✓ Registros de {ontem_str} removidos (se existiam)")
 
-count = spark.table("pipeline_meteo.bronze_clima").count() if spark.catalog.tableExists("pipeline_meteo.bronze_clima") else 0
+count = spark.table("pipeline_meteo.bronze_clima").count() \
+    if spark.catalog.tableExists("pipeline_meteo.bronze_clima") else 0
 print(f"Total de registros após limpeza: {count}")
 
 # COMMAND ----------
@@ -108,17 +104,47 @@ print(f"Total de registros após limpeza: {count}")
 
 # COMMAND ----------
 
-# Criar database se não existir
-spark.sql("CREATE DATABASE IF NOT EXISTS pipeline_meteo")
-
-# Salvar como tabela Delta gerenciada pelo Unity Catalog
 df_bronze.write \
     .format("delta") \
     .mode("append") \
     .partitionBy("_particao_data") \
     .saveAsTable("pipeline_meteo.bronze_clima")
 
-print("✓ Camada Bronze salva como tabela: pipeline_meteo.bronze_clima")
+print("✓ Camada Bronze salva: pipeline_meteo.bronze_clima")
+
+# COMMAND ----------
+
+# MAGIC %skip
+# MAGIC # Reprocessar Bronze para 2026-06-15
+# MAGIC data_str = "2026-07-04"
+# MAGIC data_obj = date(2026, 6, 15)
+# MAGIC particao = f"ano={data_obj.year}/mes={data_obj.month:02d}/dia={data_obj.day:02d}"
+# MAGIC caminho_raw = f"raw/clima/{particao}/clima_{data_str}.json"
+# MAGIC
+# MAGIC blob = bucket.blob(caminho_raw)
+# MAGIC conteudo = blob.download_as_text()
+# MAGIC dados_raw = json.loads(conteudo)
+# MAGIC
+# MAGIC df_reprocess = spark.createDataFrame(pd.DataFrame(dados_raw["registros"]))
+# MAGIC df_reprocess = df_reprocess.withColumn("_particao_data", F.lit(data_str)) \
+# MAGIC                            .withColumn("_arquivo_origem", F.lit(caminho_raw)) \
+# MAGIC                            .withColumn("_ingestao_utc", F.lit(datetime.now(timezone.utc).isoformat()))
+# MAGIC
+# MAGIC spark.sql(f"DELETE FROM pipeline_meteo.bronze_clima WHERE _particao_data = '{data_str}'")
+# MAGIC print(f"✓ Registros antigos de {data_str} removidos")
+# MAGIC
+# MAGIC df_reprocess.write \
+# MAGIC     .format("delta") \
+# MAGIC     .mode("append") \
+# MAGIC     .partitionBy("_particao_data") \
+# MAGIC     .saveAsTable("pipeline_meteo.bronze_clima")
+# MAGIC
+# MAGIC print(f"✓ {data_str} reprocessado na Bronze: {df_reprocess.count()} registros")
+# MAGIC
+# MAGIC # Validar
+# MAGIC spark.table("pipeline_meteo.bronze_clima") \
+# MAGIC     .groupBy("_particao_data").count() \
+# MAGIC     .orderBy("_particao_data").show()
 
 # COMMAND ----------
 
@@ -127,22 +153,13 @@ print("✓ Camada Bronze salva como tabela: pipeline_meteo.bronze_clima")
 
 # COMMAND ----------
 
-df_validacao = spark.table("pipeline_meteo.bronze_clima")
-
-print(f"Total de registros na Bronze: {df_validacao.count()}")
-df_validacao.show(truncate=False)
-
-# COMMAND ----------
-
-from pyspark.sql import functions as F
-
-spark.sql("USE DATABASE pipeline_meteo")
+print(f"Total de registros na Bronze: {spark.table('pipeline_meteo.bronze_clima').count()}")
 
 spark.table("pipeline_meteo.bronze_clima") \
     .groupBy("_particao_data") \
     .count() \
-    .orderBy("_particao_data") \
-    .show()
+    .orderBy(F.desc("_particao_data")) \
+    .show(5)
 
 # COMMAND ----------
 

@@ -10,34 +10,36 @@
 
 # COMMAND ----------
 
+from datetime import date, timedelta
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
 spark.sql("USE DATABASE pipeline_meteo")
-print("✓ Database selecionado: pipeline_meteo")
+
+ontem = date.today() - timedelta(days=1)
+ontem_str = ontem.isoformat()
+
+print(f"✓ Database selecionado: pipeline_meteo")
+print(f"✓ Data de processamento: {ontem_str}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Ler a Silver
+# MAGIC ## Ler a Silver (dia anterior)
 
 # COMMAND ----------
-
-from datetime import date
-
-hoje = str(date.today())
 
 df_silver = spark.table("pipeline_meteo.silver_clima") \
-    .filter(f"_particao_data = '{hoje}'")
+    .filter(f"_particao_data = '{ontem_str}'")
 
-print(f"Registros da Silver para {hoje}: {df_silver.count()}")
-df_silver.show(truncate=False)
+print(f"Registros da Silver para {ontem_str}: {df_silver.count()}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Agregação 1: resumo diário por cidade
+# MAGIC ## Agregação 1: Agregação por cidade
 
 # COMMAND ----------
-
-from pyspark.sql import functions as F
 
 df_gold_cidade = df_silver \
     .groupBy("cidade", "estado", "regiao", "data_referencia") \
@@ -52,13 +54,13 @@ df_gold_cidade = df_silver \
     ) \
     .withColumn("dia_com_chuva", F.col("precipitacao_total_mm") > 0)
 
-print("✓ Agregação por cidade:")
+print(f"✓ Agregação por cidade: {df_gold_cidade.count()} registros")
 df_gold_cidade.orderBy("regiao", "cidade").show(truncate=False)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Agregação 2: resumo diário por região
+# MAGIC ## Agregação 2: Agregação por região
 
 # COMMAND ----------
 
@@ -73,27 +75,29 @@ df_gold_regiao = df_silver \
         F.countDistinct("cidade").alias("total_cidades")
     )
 
-print("✓ Agregação por região:")
+print(f"✓ Agregação por região: {df_gold_regiao.count()} registros")
 df_gold_regiao.orderBy("regiao").show(truncate=False)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Agregação 3: ranking de temperatura do dia
+# MAGIC ## Agregação 3: ranking de temperatura
 
 # COMMAND ----------
 
-from pyspark.sql.window import Window
-
-window_rank = Window.partitionBy("data_referencia").orderBy(F.desc("temperatura_c"))
+window_rank = Window.partitionBy("data_referencia").orderBy(F.desc("temp_max_c"))
 
 df_gold_ranking = df_silver \
-    .withColumn("rank_temp", F.rank().over(window_rank)) \
-    .select("rank_temp", "cidade", "estado", "regiao",
-            "temperatura_c", "umidade_pct", "precipitacao_mm", "data_referencia")
+    .groupBy("cidade", "estado", "regiao", "data_referencia") \
+    .agg(
+        F.round(F.max("temperatura_c"), 1).alias("temp_max_c"),
+        F.round(F.avg("temperatura_c"), 1).alias("temp_media_c"),
+        F.round(F.min("temperatura_c"), 1).alias("temp_min_c"),
+    ) \
+    .withColumn("rank_temp", F.rank().over(window_rank))
 
-print("✓ Ranking de temperatura do dia:")
-df_gold_ranking.orderBy("rank_temp").show(truncate=False)
+print(f"✓ Ranking: {df_gold_ranking.count()} registros (esperado: 27)")
+df_gold_ranking.orderBy("rank_temp").show(27, truncate=False)
 
 # COMMAND ----------
 

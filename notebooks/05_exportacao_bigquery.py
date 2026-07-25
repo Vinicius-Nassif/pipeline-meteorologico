@@ -85,9 +85,12 @@ for tabela_spark, tabela_bq in tabelas:
 # COMMAND ----------
 
 queries = [
-    ("Resumo por cidade",  f"SELECT cidade, temp_media_c, dia_com_chuva FROM `{PROJECT_ID}.{DATASET_ID}.gold_resumo_cidade` ORDER BY temp_media_c DESC"),
-    ("Resumo por região",  f"SELECT regiao, temp_media_c, total_cidades FROM `{PROJECT_ID}.{DATASET_ID}.gold_resumo_regiao` ORDER BY temp_media_c DESC"),
-    ("Ranking temperatura",f"SELECT rank_temp, cidade, temperatura_c FROM `{PROJECT_ID}.{DATASET_ID}.gold_ranking_temperatura` ORDER BY rank_temp"),
+    ("Resumo por cidade",
+     f"SELECT cidade, temp_media_c, temp_max_c, temp_min_c, dia_com_chuva FROM `{PROJECT_ID}.{DATASET_ID}.gold_resumo_cidade` ORDER BY temp_media_c DESC"),
+    ("Resumo por região",
+     f"SELECT regiao, temp_media_c, temp_max_c, temp_min_c, total_cidades FROM `{PROJECT_ID}.{DATASET_ID}.gold_resumo_regiao` ORDER BY temp_media_c DESC"),
+    ("Ranking temperatura",
+     f"SELECT rank_temp, cidade, temp_max_c, temp_media_c, temp_min_c FROM `{PROJECT_ID}.{DATASET_ID}.gold_ranking_temperatura` ORDER BY rank_temp"),
 ]
 
 for titulo, query in queries:
