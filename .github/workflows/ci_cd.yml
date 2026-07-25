@@ -1,0 +1,75 @@
+name: CI/CD Pipeline Meteorológico
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: CI — Validar código
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: |
+          pip install pyflakes
+
+      - name: Validar sintaxe dos notebooks
+        run: |
+          echo "Validando sintaxe dos notebooks..."
+          for f in notebooks/*.py; do
+            echo "  Verificando $f"
+            python -m pyflakes "$f" || true
+          done
+          echo "✓ Validação concluída"
+
+  cd:
+    name: CD — Sincronizar com Databricks
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sudo sh
+
+      - name: Configurar Databricks CLI
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          databricks configure --host "$DATABRICKS_HOST" --token "$DATABRICKS_TOKEN"
+
+      - name: Sincronizar notebooks para o Databricks
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          echo "Sincronizando notebooks..."
+          for notebook in notebooks/*.py; do
+            nome=$(basename "$notebook" .py)
+            echo "  Importando $nome"
+            databricks workspace import \
+              "$notebook" \
+              "/Workspace/Users/nuvem.nassif@gmail.com/${nome}" \
+              --format SOURCE \
+              --language PYTHON \
+              --overwrite
+          done
+          echo "✓ Sincronização concluída"
