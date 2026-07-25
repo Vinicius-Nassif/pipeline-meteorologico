@@ -66,8 +66,8 @@ jobs:
             nome=$(basename "$notebook" .py)
             echo "  Importando $nome"
             databricks workspace import \
-              "$notebook" \
               "/Workspace/Users/nuvem.nassif@gmail.com/${nome}" \
+              --file "$notebook" \
               --format SOURCE \
               --language PYTHON \
               --overwrite
